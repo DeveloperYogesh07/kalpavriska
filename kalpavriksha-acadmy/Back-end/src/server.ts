@@ -1,16 +1,29 @@
-import express = require("express")
-import { Connection } from "mysql2"; // Add the appropriate type for your database connection library
-import router from "./Router/Routes";
-import { APP_PORT } from "./config/config";
+import dbConnection from './dbConnection/dbconnection'; 
+import ExpressApp from './app';
+import CoustomRoutes from './Router/CoustomRoutes';
+
+const expressApp = new ExpressApp();
 
 
-const app: express.Application = express();
-const connection: Connection = require("./dbConnection/dbconnection");
-app.use(express.json()); // for parsing application/json
-app.use(express.urlencoded({ extended: true }));
+class Server {
+ static async start() {
+  await dbConnection.connect(); // 
+  await dbConnection.syncDatabase(); // 
 
-app.use("/", router);
+  const sequelize = dbConnection.getSequelizeInstance(); // 
+  sequelize.authenticate().then(() => {
+    console.log('Database authenticated successfully.');
+  }).catch(error => {
+    console.error('Error authenticating to the database:', error);
+  });
 
-app.listen(APP_PORT, () => {
-   console.log(`Server is listening to port:${APP_PORT}`);
-});
+  const app = expressApp.getApp();
+  app.use("/", CoustomRoutes.publicRoutes());
+  app.use("/", CoustomRoutes.protectedRoutes());
+
+  expressApp.startServer();
+ }
+}
+
+Server.start();
+

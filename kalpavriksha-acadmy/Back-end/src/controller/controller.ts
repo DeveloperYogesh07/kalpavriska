@@ -1,12 +1,11 @@
 import { Request, Response, NextFunction } from "express";
 import { genSaltSync, hashSync, compareSync } from "bcryptjs";
-import { Connection,  RowDataPacket, ResultSetHeader } from "mysql2/promise"; // Import the necessary types for the promise-based client
-import { sign } from "jsonwebtoken";
+import UserModel from "../models/users";
+import bcrypt from "bcrypt";
+import jwt from "jsonwebtoken";
 
-const connection: Connection = require("../dbConnection/dbconnection");
-
-interface User {
-  id?: number; // Add an optional 'id' property to the User interface for update and delete operations
+interface UserInterface {
+  id?: number;
   name: string;
   email: string;
   password: string;
@@ -15,53 +14,84 @@ interface User {
 
 const getAllUsers = async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const query: string = "SELECT * FROM user_table";
-    const [results] = await connection.query<RowDataPacket[]>(query);
-    return res.status(200).json(results);
+    const allUsers: UserInterface[] = await UserModel.findAll({ raw: true });
+    return res.status(200).json({ message: "success", data: allUsers });
   } catch (err) {
-    return res.status(401).json(err);
+    console.error("Error fetching all users:", err);
+    return res.status(500).json({ error: "Internal Server Error" });
   }
 };
 
-const createNewUser = async (req: Request, res: Response, next: NextFunction) => {
+const createNewUser = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+) => {
   try {
-    const user: User = req.body;
+    const { password } = req.body;
+
     const salt = genSaltSync(10);
-    user.password = hashSync(user.password, salt);
-    const query: string = "INSERT INTO user_table (name, email, password, role) VALUES (?, ?, ?, ?)";
-    const [results] = await connection.query<ResultSetHeader>(query, [user.name, user.email, user.password, user.role]);
-    return res.status(201).json({ message: "User Added Successfully!!", data: user });
+    const hashPassword = hashSync(password, salt);
+    const newUser: UserInterface = await UserModel.create({
+      name: req.body.name,
+      email: req.body.email,
+      password: hashPassword,
+      role: req.body.role,
+    });
+
+    return res
+      .status(201)
+      .json({ message: "User Added Successfully!!", data: newUser });
   } catch (err) {
+    console.error("Sequelize validation error:", err.message);
     return res.status(500).json(err);
   }
 };
 
-const updateUserById = async (req: Request, res: Response, next: NextFunction) => {
+const updateUserById = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+) => {
   try {
     const id: number = Number(req.params.id);
-    let user: User = req.body;
+
+    console.log(id);
+    let { name, email, password } = req.body;
     const salt = genSaltSync(10);
-    user.password = hashSync(user.password, salt);
-    const query: string = "UPDATE user_table SET name=?, email=?, password=? WHERE id=?";
-    const [results] = await connection.query<ResultSetHeader>(query, [user.name, user.email, user.password, id]);
-    if (results.affectedRows === 0) {
-      return res.status(404).json({ message: "User ID not found" });
-    }
-    return res.status(200).json({ message: "User is updated" });
+    const hashPassword = hashSync(password, salt);
+
+    await UserModel.update(
+      {
+        name: name,
+        email: email,
+        password: hashPassword,
+      },
+      { where: { id } }
+    );
+    const updatedUser: UserInterface = await UserModel.findByPk(id);
+
+    return res
+      .status(200)
+      .json({ message: "user updated sucsessfully!!", data: updatedUser });
   } catch (err) {
     return res.status(400).json(err);
   }
 };
 
-const deleteUserById = async (req: Request, res: Response, next: NextFunction) => {
+const deleteUserById = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+) => {
   try {
     const id: number = Number(req.params.id);
-    const query: string = "DELETE FROM user_table WHERE id=?";
-    const [results] = await connection.query<ResultSetHeader>(query, [id]);
-    if (results.affectedRows === 0) {
-      return res.status(404).json({ message: "User ID not found" });
-    }
-    return res.status(200).json({ message: "User is deleted!!" });
+    const deletedUser: UserInterface = await UserModel.findByPk(id);
+
+    await UserModel.destroy({ where: { id } });
+    res
+      .status(200)
+      .json({ message: "user deleted sucsesfully", data: deletedUser });
   } catch (err) {
     return res.status(400).json(err);
   }
@@ -70,20 +100,25 @@ const deleteUserById = async (req: Request, res: Response, next: NextFunction) =
 const login = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { email, password } = req.body;
-    const query: string = "SELECT * FROM user_table WHERE email=?";
-    const [results] = await connection.query<RowDataPacket[]>(query, [email]);
-    if (!results[0]) {
+
+    const user = await UserModel.findOne({ where: { email } });
+
+    if (!user) {
       return res.status(404).json({
         success: 0,
         data: "Invalid email or password!!",
       });
     }
-    const result: boolean = compareSync(password, results[0].password);
-    if (result) {
-      results[0].password = undefined;
-      const jsontoken = sign({ result: results[0] }, "qwe1234", {
+
+    const isPasswordValid = await bcrypt.compare(password, user.password);
+
+    if (isPasswordValid) {
+      user.password = undefined;
+
+      const jsontoken = jwt.sign({ user }, "qwe1234", {
         expiresIn: "1h",
       });
+
       return res.json({
         success: 1,
         message: "Login successfully",
@@ -100,10 +135,4 @@ const login = async (req: Request, res: Response, next: NextFunction) => {
   }
 };
 
-export {
-  getAllUsers,
-  createNewUser,
-  updateUserById,
-  deleteUserById,
-  login,
-};
+export { getAllUsers, createNewUser, updateUserById, deleteUserById, login };
